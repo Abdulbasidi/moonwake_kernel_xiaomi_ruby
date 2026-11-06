@@ -18,6 +18,8 @@
  */
 
 #include <linux/init.h>
+#include <linux/socket.h>
+#include <net/sock.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/vm_sockets.h>
@@ -26,7 +28,7 @@
 
 #define VSOCK_LOOPBACK_BUF_SIZE (16 * 1024 * 1024)
 
-static int vsock_loopback_init(struct vsock_sock *vsk,
+static int vsock_loopback_sock_init(struct vsock_sock *vsk,
 			       struct vsock_sock *psk)
 {
 	return 0;
@@ -221,7 +223,7 @@ static u32 vsock_loopback_get_local_cid(void)
 }
 
 static const struct vsock_transport vsock_loopback_transport = {
-	.init			= vsock_loopback_init,
+	.init			= vsock_loopback_sock_init,
 	.destruct		= vsock_loopback_destruct,
 	.release		= vsock_loopback_release,
 
