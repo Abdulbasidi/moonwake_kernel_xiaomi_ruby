@@ -37,7 +37,6 @@
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/uaccess.h>
-#include <linux/kstrtox.h>
 #include <linux/fs.h>
 
 #define pr_fmt(fmt) "oplus_nodes: " fmt
