@@ -525,6 +525,26 @@ def main():
     )
 
     # ---------------------------------------------------------------
+    # 9. include/linux/mmzone.h: android_oem_data1 в struct pglist_data.
+    #    hybridswapd.c держит per-node hybridswapd_task на pgdat
+    #    (PGDAT_ITEM_DATA). В доноре Realme поле стоит после
+    #    kswapd_failures, перед #ifdef CONFIG_COMPACTION — ставим так же.
+    # ---------------------------------------------------------------
+    print(col(CYN, "[9/9] include/linux/mmzone.h"))
+    p.patch(
+        "include/linux/mmzone.h",
+        "\tint kswapd_failures;\t\t/* Number of 'reclaimed == 0' runs */\n"
+        "\n"
+        "#ifdef CONFIG_COMPACTION\n",
+        "\tint kswapd_failures;\t\t/* Number of 'reclaimed == 0' runs */\n"
+        "\n"
+        "\tu64 android_oem_data1;\n"
+        "#ifdef CONFIG_COMPACTION\n",
+        "android_oem_data1 in struct pglist_data",
+        marker="\tu64 android_oem_data1;\n#ifdef CONFIG_COMPACTION",
+    )
+
+    # ---------------------------------------------------------------
     print()
     print(col(CYN, "== summary =="))
     print("   applied : %d" % len(p.applied))
