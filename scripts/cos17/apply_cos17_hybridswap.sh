@@ -171,6 +171,8 @@ if [ -z "$CHECK" ]; then
     chk "" "trace_android_vh_meminfo_proc_show(m);" fs/proc/meminfo.c "meminfo hook"
     chk "" "#define ___GFP_HIGH_ATOMIC_ZRAM 0x2000000u" include/linux/gfp.h "gfp HIGH_ATOMIC_ZRAM"
     chk "" "u64 android_oem_data1;" include/linux/mmzone.h "pgdat android_oem_data1"
+    chk drivers/misc/oplus_nodes.c "" "" "oplus_nodes driver"
+    chk "" "CONFIG_OPLUS_NODES=y" arch/arm64/configs/vendor/cos17.config "OPLUS_NODES config"
     chk "" "#include <trace/hooks/vh_vmscan.h>" drivers/android/vendor_hooks.c "CREATE_TRACE_POINTS"
     chk arch/arm64/configs/vendor/cos17.config "" "" "config fragment"
 
