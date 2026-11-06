@@ -10,6 +10,7 @@
 #include <linux/percpu.h>
 #include <linux/quicklist.h>
 #include <linux/seq_file.h>
+#include <trace/hooks/vh_vmscan.h>
 #include <linux/swap.h>
 #include <linux/vmstat.h>
 #include <linux/atomic.h>
@@ -151,6 +152,7 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 	hugetlb_report_meminfo(m);
 
 	arch_report_meminfo(m);
+	trace_android_vh_meminfo_proc_show(m);
 
 	return 0;
 }
