@@ -488,7 +488,7 @@ static int phoenix_show(struct seq_file *m, void *v)
 {
 	seq_printf(m, "phoenix: enabled (compat node)\n");
 	seq_printf(m, "kernel: %s\n", utsname()->release);
-	seq_printf(m, "uptime: %llu\n", (unsigned long long)ktime_get() / HZ);
+	seq_printf(m, "uptime: %llu\n", ktime_get_seconds());
 	return 0;
 }
 
@@ -507,7 +507,7 @@ static int jank_info_show(struct seq_file *m, void *v)
 static int theia_pwk_report_show(struct seq_file *m, void *v)
 {
 	seq_printf(m, "theia: disabled (compat node)\n");
-	seq_printf(m, "uptime: %llu\n", (unsigned long long)ktime_get() / HZ);
+	seq_printf(m, "uptime: %llu\n", ktime_get_seconds());
 	return 0;
 }
 
