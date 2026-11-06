@@ -169,6 +169,7 @@ if [ -z "$CHECK" ]; then
     chk "" "trace_android_vh_tune_scan_type" mm/vmscan.c "vmscan tune_scan_type"
     chk "" "trace_android_vh_rmqueue" mm/page_alloc.c "page_alloc rmqueue hook"
     chk "" "trace_android_vh_meminfo_proc_show(m);" fs/proc/meminfo.c "meminfo hook"
+    chk "" "#define ___GFP_HIGH_ATOMIC_ZRAM 0x2000000u" include/linux/gfp.h "gfp HIGH_ATOMIC_ZRAM"
     chk "" "#include <trace/hooks/vh_vmscan.h>" drivers/android/vendor_hooks.c "CREATE_TRACE_POINTS"
     chk arch/arm64/configs/vendor/cos17.config "" "" "config fragment"
 

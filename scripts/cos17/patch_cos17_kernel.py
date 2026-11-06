@@ -503,6 +503,28 @@ def main():
     p.write_if_missing("arch/arm64/configs/vendor/cos17.config", CONFIG_FRAGMENT)
 
     # ---------------------------------------------------------------
+    # 8. include/linux/gfp.h: ___GFP_HIGH_ATOMIC_ZRAM (донорский zram
+    #    ждёт его; в 4.19.325 его нет). Realme ставит ту же пару:
+    #    define 0x2000000u (бит 25, свободен: CMA — бит 24) + BITS_SHIFT 25->26.
+    # ---------------------------------------------------------------
+    print(col(CYN, "[8/8] include/linux/gfp.h"))
+    p.patch(
+        "include/linux/gfp.h",
+        "#define ___GFP_CMA\t\t0x1000000u\n",
+        "#define ___GFP_CMA\t\t0x1000000u\n"
+        "#define ___GFP_HIGH_ATOMIC_ZRAM 0x2000000u\n",
+        "___GFP_HIGH_ATOMIC_ZRAM",
+        marker="#define ___GFP_HIGH_ATOMIC_ZRAM 0x2000000u",
+    )
+    p.patch(
+        "include/linux/gfp.h",
+        "#define __GFP_BITS_SHIFT (25)\n",
+        "#define __GFP_BITS_SHIFT (26)\n",
+        "__GFP_BITS_SHIFT 25->26",
+        marker="#define __GFP_BITS_SHIFT (26)",
+    )
+
+    # ---------------------------------------------------------------
     print()
     print(col(CYN, "== summary =="))
     print("   applied : %d" % len(p.applied))
