@@ -88,10 +88,12 @@ command -v python3 >/dev/null 2>&1 || die "нужен python3"
 PATCHER="$(find_file patch_cos17_kernel.py)" \
     || die "не найден patch_cos17_kernel.py (ожидался рядом со скриптом или в scripts/cos17/)"
 CONFIG="$(find_file cos17.config)" || CONFIG=""
+CONFIG_SUKISU="$(find_file sukisu.config)" || CONFIG_SUKISU=""
 
 say "kernel : $ROOT"
 say "patcher: $PATCHER"
 [ -n "$CONFIG" ] && say "config : $CONFIG"
+[ -n "$CONFIG_SUKISU" ] && say "sukisu config : $CONFIG_SUKISU"
 
 # ------------------------------------------------------------- download -----
 FILES="
@@ -143,6 +145,14 @@ if [ -z "$CHECK" ]; then
         printf '  keep   %s (уже есть)\n' "${DEST#$ROOT/}"
     else
         warn "  WARN: cos17.config рядом не найден, но патчер должен был его создать"
+    fi
+    DEST_SUKISU="$ROOT/arch/arm64/configs/vendor/sukisu.config"
+    if [ -n "$CONFIG_SUKISU" ] && [ -f "$CONFIG_SUKISU" ] && [ ! -f "$DEST_SUKISU" ]; then
+        mkdir -p "$(dirname "$DEST_SUKISU")"
+        cp "$CONFIG_SUKISU" "$DEST_SUKISU"
+        printf '  write  %s\n' "${DEST_SUKISU#$ROOT/}"
+    elif [ -f "$DEST_SUKISU" ]; then
+        printf '  keep   %s (уже есть)\n' "${DEST_SUKISU#$ROOT/}"
     fi
 else
     say "== [3/3] --check: конфиг не пишу =="

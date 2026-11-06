@@ -98,6 +98,28 @@ CONFIG_VSOCKETS_LOOPBACK=y
 CONFIG_OPLUS_NODES=y
 """
 
+CONFIG_FRAGMENT_SUKISU = """\
+# ============================================================
+#  SukiSU Ultra (main, kprobes hooks) for ruby / MoonWake 4.19.325
+#
+#  CONFIG_KSU depends on KPROBES && EXT4_FS; ruby_defconfig has
+#  KPROBES=n, so we enable it explicitly here.
+#  SUSFS is NOT used: SukiSU main branch has no CONFIG_KSU_SUSFS,
+#  so vendor/susfs.config must NOT be added to extraConfig.
+# ============================================================
+CONFIG_KPROBES=y
+CONFIG_HAVE_KPROBES=y
+CONFIG_KRETPROBES=y
+CONFIG_HAVE_KRETPROBES=y
+CONFIG_EXT4_FS=y
+CONFIG_KSU=y
+CONFIG_KSU_MANUAL_SU=y
+# CONFIG_KPM is not set
+# CONFIG_KSU_DEBUG is not set
+# CONFIG_KSU_DISABLE_MANAGER is not set
+# CONFIG_KSU_DISABLE_POLICY is not set
+"""
+
 
 class Patcher:
     def __init__(self, root, check=False):
@@ -567,6 +589,7 @@ def main():
         marker="trace_android_vh_meminfo_proc_show(m);",
     )
     p.write_if_missing("arch/arm64/configs/vendor/cos17.config", CONFIG_FRAGMENT)
+    p.write_if_missing("arch/arm64/configs/vendor/sukisu.config", CONFIG_FRAGMENT_SUKISU)
 
     # ---------------------------------------------------------------
     # 8. include/linux/gfp.h: ___GFP_HIGH_ATOMIC_ZRAM (донорский zram
