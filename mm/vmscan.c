@@ -64,6 +64,7 @@
 #include "internal.h"
 
 #include <trace/hooks/vh_vmscan.h>
+#undef TRACE_INCLUDE_PATH
 #define CREATE_TRACE_POINTS
 #include <trace/events/vmscan.h>
 #include <linux/string.h>
