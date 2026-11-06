@@ -63,10 +63,10 @@
 
 #include "internal.h"
 
+#include <trace/hooks/vh_vmscan.h>
 #define CREATE_TRACE_POINTS
 #include <trace/events/vmscan.h>
 #include <linux/string.h>
-#include <trace/hooks/vh_vmscan.h>
 
 #ifdef CONFIG_HYBRIDSWAP_SWAPD
 static int hybridswapd_swappiness = 200;

@@ -402,12 +402,18 @@ def main():
     # 5. mm/vmscan.c: swappiness для hybridswapd + tune_scan_type
     # ---------------------------------------------------------------
     print(col(CYN, "[5/7] mm/vmscan.c"))
+    # vh_vmscan.h ОБЯЗТЕЛЬНО до `#define CREATE_TRACE_POINTS`:
+    # mm/vmscan.c включает trace/events/vmscan.h под CREATE_TRACE_POINTS,
+    # и если хуки включены ПОСЛЕ него, __tracepoint_android_vh_* дефайнятся
+    # дважды (mm/vmscan.o + drivers/android/vendor_hooks.o) -> duplicate
+    # symbol на линке vmlinux.
     p.patch(
         "mm/vmscan.c",
-        "#include <trace/events/vmscan.h>\n",
+        "#define CREATE_TRACE_POINTS\n#include <trace/events/vmscan.h>\n",
+        "#include <trace/hooks/vh_vmscan.h>\n"
+        "#define CREATE_TRACE_POINTS\n"
         "#include <trace/events/vmscan.h>\n"
         "#include <linux/string.h>\n"
-        "#include <trace/hooks/vh_vmscan.h>\n"
         "\n"
         "#ifdef CONFIG_HYBRIDSWAP_SWAPD\n"
         "static int hybridswapd_swappiness = 200;\n"
@@ -420,9 +426,35 @@ def main():
         # существует в обоих донорах.
         "extern bool free_zram_is_ok(void);\n"
         "#endif\n",
-        "include vh_vmscan.h + hybridswapd_swappiness",
+        "include vh_vmscan.h before CREATE_TRACE_POINTS + hybridswapd_swappiness",
         marker="static int hybridswapd_swappiness = 200;",
     )
+    # Ремонт порядка для деревьев, пропатченных старым вариантом патчера
+    # (хуки стояли ПОСЛЕ trace/events/vmscan.h). На чистом дереве ни одного
+    # паттерна нет — там правильный порядок ставит include-патч выше.
+    _vmscan_rel = "mm/vmscan.c"
+    try:
+        _v = p._read(_vmscan_rel)
+    except FileNotFoundError:
+        _v = None
+    if _v is not None:
+        _bad = ("#define CREATE_TRACE_POINTS\n"
+                "#include <trace/events/vmscan.h>\n"
+                "#include <linux/string.h>\n"
+                "#include <trace/hooks/vh_vmscan.h>\n")
+        _good = ("#include <trace/hooks/vh_vmscan.h>\n"
+                 "#define CREATE_TRACE_POINTS\n"
+                 "#include <trace/events/vmscan.h>\n"
+                 "#include <linux/string.h>\n")
+        if "\r\n" in _v:
+            _bad = _bad.replace("\n", "\r\n")
+            _good = _good.replace("\n", "\r\n")
+        if _good in _v:
+            p.skip("%s: vh_vmscan.h before CREATE_TRACE_POINTS" % _vmscan_rel)
+        elif _bad in _v:
+            if not p.check:
+                p._write(_vmscan_rel, _v.replace(_bad, _good, 1))
+            p.ok("%s: vh_vmscan.h before CREATE_TRACE_POINTS" % _vmscan_rel)
     # 5.0 hybridmain.c зовёт move_active_pages_to_lru() напрямую,
     #     а в 4.19.325 она static -> нужен внешний символ.
     p.patch(
