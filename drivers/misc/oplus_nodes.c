@@ -487,7 +487,7 @@ static struct notifier_block lbr_reboot_nb = {
 static int phoenix_show(struct seq_file *m, void *v)
 {
 	seq_printf(m, "phoenix: enabled (compat node)\n");
-	seq_printf(m, "kernel: %s\n", UTS_RELEASE);
+	seq_printf(m, "kernel: %s\n", utsname()->release);
 	seq_printf(m, "uptime: %llu\n", (unsigned long long)ktime_get() / HZ);
 	return 0;
 }
