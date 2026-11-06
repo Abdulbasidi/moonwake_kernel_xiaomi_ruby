@@ -286,6 +286,20 @@ def main():
     )
 
     # ---------------------------------------------------------------
+    # 2c. hybridswap.c: у донора пропущен тип возврата у meminfo_show
+    #     (возвращает ssize_t `size`, используется как ssize_t). Свежий
+    #     clang с -Werror ловит это как implicit-int -> добавим тип.
+    # ---------------------------------------------------------------
+    print(col(CYN, "[2c/7] hybridswap.c: meminfo_show return type"))
+    p.patch(
+        "drivers/block/zram/hybridswap/hybridswap.c",
+        "static inline meminfo_show(struct hybridswap_stat *stat, char *buf, ssize_t len)",
+        "static inline ssize_t meminfo_show(struct hybridswap_stat *stat, char *buf, ssize_t len)",
+        "add ssize_t return type to meminfo_show",
+        marker="static inline ssize_t meminfo_show(struct hybridswap_stat *stat, char *buf, ssize_t len)",
+    )
+
+    # ---------------------------------------------------------------
     # 3. struct mem_cgroup: OPPO-поле android_oem_data1
     # ---------------------------------------------------------------
     print(col(CYN, "[3/7] include/linux/memcontrol.h"))
