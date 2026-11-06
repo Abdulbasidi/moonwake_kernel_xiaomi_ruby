@@ -38,6 +38,7 @@
 #include <linux/string.h>
 #include <linux/uaccess.h>
 #include <linux/fs.h>
+#include <linux/utsname.h>
 
 #define pr_fmt(fmt) "oplus_nodes: " fmt
 
@@ -521,7 +522,7 @@ static const struct file_operations name##_fops = {			\
 	.read = seq_read,					\
 	.llseek = seq_lseek,				\
 	.release = single_release,				\
-}
+};
 
 MK_SINGLE_FOPS(phoenix)
 MK_SINGLE_FOPS(jank_info)
