@@ -177,6 +177,65 @@ PATCHES = [
     ),
 ]
 
+# (rel, marker, old, new, label) — точечные замены для fops, которых нет в 4.19
+EDITS = [
+    (
+        os.path.join("infra", "file_wrapper.c"),
+        "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)\n#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)",
+        "#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)\n"
+        "static int ksu_wrapper_iopoll(struct kiocb *kiocb, struct io_comp_batch *icb, unsigned int v)",
+        "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)\n"
+        "#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)\n"
+        "static int ksu_wrapper_iopoll(struct kiocb *kiocb, struct io_comp_batch *icb, unsigned int v)",
+        "iopoll fn guard",
+    ),
+    (
+        os.path.join("infra", "file_wrapper.c"),
+        "    return orig->f_op->iopoll(kiocb, spin);\n}\n#endif\n#endif\n",
+        "    return orig->f_op->iopoll(kiocb, spin);\n}\n#endif\n",
+        "    return orig->f_op->iopoll(kiocb, spin);\n}\n#endif\n#endif\n",
+        "iopoll fn end guard",
+    ),
+    (
+        os.path.join("infra", "file_wrapper.c"),
+        "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)\n    p->ops.iopoll",
+        "    p->ops.iopoll = fp->f_op->iopoll ? ksu_wrapper_iopoll : NULL;\n",
+        "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)\n"
+        "    p->ops.iopoll = fp->f_op->iopoll ? ksu_wrapper_iopoll : NULL;\n"
+        "#endif\n",
+        "iopoll assignment guard",
+    ),
+    (
+        os.path.join("infra", "file_wrapper.c"),
+        "#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 20, 0)\nstatic loff_t ksu_wrapper_remap_file_range",
+        "static loff_t ksu_wrapper_remap_file_range(struct file *file_in, loff_t pos_in, struct file *file_out, loff_t pos_out,\n",
+        "#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 20, 0)\n"
+        "static loff_t ksu_wrapper_remap_file_range(struct file *file_in, loff_t pos_in, struct file *file_out, loff_t pos_out,\n",
+        "remap fn guard",
+    ),
+    (
+        os.path.join("infra", "file_wrapper.c"),
+        "}\n#endif\n\nstatic int ksu_wrapper_fadvise",
+        "        return orig->f_op->remap_file_range(orig, pos_in, file_out, pos_out, len, remap_flags);\n"
+        "    }\n"
+        "}\n",
+        "        return orig->f_op->remap_file_range(orig, pos_in, file_out, pos_out, len, remap_flags);\n"
+        "    }\n"
+        "}\n"
+        "#endif\n",
+        "remap fn end guard",
+    ),
+    (
+        os.path.join("infra", "file_wrapper.c"),
+        "#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 20, 0)\n    p->ops.remap_file_range",
+        "    p->ops.remap_file_range = fp->f_op->remap_file_range ? ksu_wrapper_remap_file_range : NULL;\n",
+        "#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 20, 0)\n"
+        "    p->ops.remap_file_range = fp->f_op->remap_file_range ? ksu_wrapper_remap_file_range : NULL;\n"
+        "#endif\n",
+        "remap assignment guard",
+    ),
+]
+
 fail = 0
 for rel, anchor, marker, block, label in PATCHES:
     path = os.path.join(root, rel)
@@ -196,6 +255,26 @@ for rel, anchor, marker, block, label in PATCHES:
     with open(path, "w", encoding="utf-8", newline="") as f:
         f.write(src)
     print("  ok: %s compat added to %s" % (label, rel))
+
+for rel, marker, old, new, label in EDITS:
+    path = os.path.join(root, rel)
+    if not os.path.isfile(path):
+        print("  skip: %s not found" % rel)
+        continue
+    with open(path, encoding="utf-8", newline="") as f:
+        src = f.read()
+    if marker in src:
+        print("  skip: %s (%s already present)" % (rel, label))
+        continue
+    n = src.count(old)
+    if n != 1:
+        print("  FAIL: %s: anchor matched %d time(s), expected 1" % (rel, n))
+        fail = 1
+        continue
+    src = src.replace(old, new, 1)
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        f.write(src)
+    print("  ok: %s added to %s" % (label, rel))
 
 sys.exit(fail)
 PY
