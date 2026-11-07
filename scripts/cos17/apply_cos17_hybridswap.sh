@@ -134,10 +134,12 @@ say "== [2/3] patching kernel tree =="
 python3 "$PATCHER" "$ROOT" $CHECK
 
 # ------------------------------------------------------- sukisu 4.19 compat --
-# Ветка main SukiSU местами использует API, появившийся позже 4.19:
-#   * MODULE_IMPORT_NS()      — Linux 5.4 (kernel/core/init.c)
-#   * copy_to_kernel_nofault() — Linux 5.8 (hook/arm64/patch_memory.c)
-# Без этого clang -Werror падает на implicit declaration.
+# SukiSU Ultra местами использует API, появившийся позже 4.19:
+#   v4.x (main):  MODULE_IMPORT_NS(), copy_to_kernel_nofault(), fops iopoll/remap
+#   v3.2.0:       MODULE_IMPORT_NS(), copy_from_user_nofault(),
+#                 policydb_filenametr_search()/filename_trans_key,
+#                 path_umount() и GitHub-проба версии в Makefile.
+# Без этого clang падает на undeclared identifier / implicit declaration.
 # Правим ТОЛЬКО если SukiSU уже развёрнут в дереве (CI делает это до нас).
 sukisu_compat() {
     local dir="$ROOT/drivers/kernelsu"
@@ -145,8 +147,9 @@ sukisu_compat() {
         say "== SukiSU compat: пропускаю (drivers/kernelsu нет) =="
         return 0
     fi
-    say "== SukiSU 4.19 compat =="
-    python3 - "$dir" <<'PY'
+    if [ -f "$dir/infra/file_wrapper.c" ]; then
+        say "== SukiSU 4.19 compat (v4.x layout) =="
+        python3 - "$dir" <<'PY'
 import os
 import sys
 
@@ -278,6 +281,203 @@ for rel, marker, old, new, label in EDITS:
 
 sys.exit(fail)
 PY
+    elif [ -f "$dir/core_hook.c" ]; then
+        say "== SukiSU 4.19 compat (v3.2.0 layout) =="
+        python3 - "$dir" <<'PY'
+import os
+import sys
+
+root = sys.argv[1]
+
+PATCHES = [
+    (
+        "ksu.c",
+        "#include <linux/workqueue.h>",
+        "#define MODULE_IMPORT_NS(ns)",
+        "/* COS17: MODULE_IMPORT_NS appeared in Linux 5.4; 4.19 has no such macro. */\n"
+        "#ifndef MODULE_IMPORT_NS\n"
+        "#define MODULE_IMPORT_NS(ns)\n"
+        "#endif",
+        "MODULE_IMPORT_NS",
+    ),
+    (
+        "kernel_compat.h",
+        "#include <linux/version.h>",
+        "#define copy_from_user_nofault",
+        "/* COS17: copy_from_user_nofault appeared in Linux 5.8; 4.19 has probe_user_read(). */\n"
+        "#include <linux/uaccess.h>\n"
+        "#ifndef copy_from_user_nofault\n"
+        "#define copy_from_user_nofault(dst, src, size) \\\n"
+        "\tprobe_user_read((dst), (const void __user *)(src), (size))\n"
+        "#endif",
+        "copy_from_user_nofault",
+    ),
+    (
+        "core_hook.c",
+        "static void ksu_umount_mnt(struct path *path, int flags)",
+        "extern int path_umount(struct path *path, int flags);",
+        "/* COS17: 4.19 declares path_umount() only in fs/internal.h. */\n"
+        "extern int path_umount(struct path *path, int flags);",
+        "path_umount declaration",
+    ),
+    (
+        "Makefile",
+        "$(info -- $(REPO_NAME) version (Github): $(KSU_VERSION_FULL))\nendif",
+        "KSU_VERSION := 13375",
+        "# COS17: the v3.2.0 Makefile probes GitHub and would report the latest\n"
+        "# v4.x release plus a main-branch commit count, making the manager\n"
+        "# enable post-v3.2.0 features. Pin the v3.2.0 release version instead.\n"
+        "KSU_VERSION := 13375\n"
+        "KSU_VERSION_FULL := v3.2.0",
+        "KSU_VERSION pin",
+    ),
+]
+
+fail = 0
+for rel, anchor, marker, block, label in PATCHES:
+    path = os.path.join(root, rel)
+    if not os.path.isfile(path):
+        print("  skip: %s not found" % rel)
+        continue
+    with open(path, encoding="utf-8", newline="") as f:
+        src = f.read().replace("\r\n", "\n")
+    if marker in src:
+        print("  skip: %s (%s already present)" % (rel, label))
+        continue
+    if anchor not in src:
+        print("  FAIL: anchor not found in %s (%s)" % (rel, label))
+        fail = 1
+        continue
+    src = src.replace(anchor, anchor + "\n\n" + block, 1)
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(src)
+    print("  ok: %s added to %s" % (label, rel))
+
+REPLACES = [
+    (
+        os.path.join("selinux", "rules.c"),
+        "COS17: 4.19 keeps the policydb",
+        "static struct policydb *get_policydb(void)\n"
+        "{\n"
+        "\tstruct policydb *db;\n"
+        "\tstruct selinux_policy *policy = selinux_state.policy;\n"
+        "\tdb = &policy->policydb;\n"
+        "\treturn db;\n"
+        "}",
+        "static struct policydb *get_policydb(void)\n"
+        "{\n"
+        "\tstruct policydb *db;\n"
+        "#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 1, 0)\n"
+        "\t/* COS17: 4.19 keeps the policydb in selinux_state.ss. */\n"
+        "\tstruct selinux_ss *ss = selinux_state.ss;\n"
+        "\tdb = &ss->policydb;\n"
+        "#else\n"
+        "\tstruct selinux_policy *policy = selinux_state.policy;\n"
+        "\tdb = &policy->policydb;\n"
+        "#endif\n"
+        "\treturn db;\n"
+        "}",
+        "policydb from selinux_state.ss",
+    ),
+]
+
+for rel, marker, old, new, label in REPLACES:
+    path = os.path.join(root, rel)
+    if not os.path.isfile(path):
+        print("  skip: %s not found" % rel)
+        continue
+    with open(path, encoding="utf-8", newline="") as f:
+        src = f.read().replace("\r\n", "\n")
+    if marker in src:
+        print("  skip: %s (%s already present)" % (rel, label))
+        continue
+    if src.count(old) != 1:
+        print("  FAIL: %s: anchor matched %d time(s), expected 1 (%s)"
+              % (rel, src.count(old), label))
+        fail = 1
+        continue
+    src = src.replace(old, new, 1)
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(src)
+    print("  ok: %s replaced in %s" % (label, rel))
+
+# --- filename_trans: 4.19 uses the pre-5.7 policydb layout ------------------
+rel = os.path.join("selinux", "sepolicy.c")
+path = os.path.join(root, rel)
+if not os.path.isfile(path):
+    print("  skip: %s not found" % rel)
+else:
+    with open(path, encoding="utf-8", newline="") as f:
+        src = f.read().replace("\r\n", "\n")
+    if "COS17: 4.19 filename_trans" in src:
+        print("  skip: %s (filename_trans compat already present)" % rel)
+    else:
+        start_marker = "\tstruct filename_trans_key key;\n"
+        end_marker = "\treturn ebitmap_set_bit(&trans->stypes, src->value - 1, 1) == 0;\n"
+        i = src.find(start_marker)
+        j = src.find(end_marker, i + 1) if i >= 0 else -1
+        if i < 0 or j < 0:
+            print("  FAIL: filename_trans anchors not found in %s" % rel)
+            fail = 1
+        else:
+            body = src[i:j + len(end_marker)]
+            compat = (
+                "#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 7, 0)\n"
+                "\t/* COS17: 4.19 filename_trans is keyed by stype/ttype/tclass/name\n"
+                "\t * and the datum only stores otype; there is no stypes bitmap\n"
+                "\t * and no compat_filename_trans_count in struct policydb.\n"
+                "\t */\n"
+                "\tstruct filename_trans key;\n"
+                "\tstruct filename_trans_datum *trans;\n"
+                "\tstruct filename_trans *new_key;\n"
+                "\n"
+                "\tkey.stype = src->value;\n"
+                "\tkey.ttype = tgt->value;\n"
+                "\tkey.tclass = cls->value;\n"
+                "\tkey.name = (char *)o;\n"
+                "\n"
+                "\ttrans = hashtab_search(db->filename_trans, &key);\n"
+                "\tif (trans == NULL) {\n"
+                "\t\ttrans = (struct filename_trans_datum *)kzalloc(\n"
+                "\t\t\tsizeof(*trans), GFP_ATOMIC);\n"
+                "\t\tnew_key = (struct filename_trans *)kmalloc(\n"
+                "\t\t\tsizeof(*new_key), GFP_ATOMIC);\n"
+                "\t\tif (!trans || !new_key) {\n"
+                "\t\t\tkfree(trans);\n"
+                "\t\t\tkfree(new_key);\n"
+                "\t\t\treturn false;\n"
+                "\t\t}\n"
+                "\t\t*new_key = key;\n"
+                "\t\tnew_key->name = kstrdup(key.name, GFP_ATOMIC);\n"
+                "\t\tif (!new_key->name) {\n"
+                "\t\t\tkfree(new_key);\n"
+                "\t\t\tkfree(trans);\n"
+                "\t\t\treturn false;\n"
+                "\t\t}\n"
+                "\t\tif (hashtab_insert(db->filename_trans, new_key, trans)) {\n"
+                "\t\t\tkfree(new_key->name);\n"
+                "\t\t\tkfree(new_key);\n"
+                "\t\t\tkfree(trans);\n"
+                "\t\t\treturn false;\n"
+                "\t\t}\n"
+                "\t} else {\n"
+                "\t\ttrans->otype = def->value;\n"
+                "\t}\n"
+                "\n"
+                "\tebitmap_set_bit(&db->filename_trans_ttypes, key.ttype, 1);\n"
+                "\treturn true;\n"
+                "#else\n"
+            )
+            src = src[:i] + compat + body + "#endif\n" + src[j + len(end_marker):]
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(src)
+            print("  ok: filename_trans pre-5.7 branch added to %s" % rel)
+
+sys.exit(fail)
+PY
+    else
+        warn "== SukiSU compat: неизвестная раскладка, пропускаю =="
+    fi
 }
 
 if [ -z "$CHECK" ]; then
