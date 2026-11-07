@@ -167,7 +167,7 @@ block = (
     anchor + "\n\n"
     "/* COS17: MODULE_IMPORT_NS appeared in Linux 5.4; 4.19 has no such macro. */\n"
     "#ifndef MODULE_IMPORT_NS\n"
-    "#define MODULE_IMPORT_NS(ns) do { } while (0)\n"
+    "#define MODULE_IMPORT_NS(ns)\n"
     "#endif"
 )
 src = src.replace(anchor, block, 1)
