@@ -313,14 +313,6 @@ PATCHES = [
         "copy_from_user_nofault",
     ),
     (
-        "core_hook.c",
-        "static void ksu_umount_mnt(struct path *path, int flags)",
-        "extern int path_umount(struct path *path, int flags);",
-        "/* COS17: 4.19 declares path_umount() only in fs/internal.h. */\n"
-        "extern int path_umount(struct path *path, int flags);",
-        "path_umount declaration",
-    ),
-    (
         "Makefile",
         "$(info -- $(REPO_NAME) version (Github): $(KSU_VERSION_FULL))\nendif",
         "KSU_VERSION := 13375",
@@ -354,6 +346,16 @@ for rel, anchor, marker, block, label in PATCHES:
     print("  ok: %s added to %s" % (label, rel))
 
 REPLACES = [
+    (
+        os.path.join("core_hook.c"),
+        "COS17: 4.19 declares path_umount",
+        "static void ksu_umount_mnt(struct path *path, int flags)\n{",
+        "/* COS17: 4.19 declares path_umount() only in fs/internal.h. */\n"
+        "extern int path_umount(struct path *path, int flags);\n"
+        "\n"
+        "static void ksu_umount_mnt(struct path *path, int flags)\n{",
+        "path_umount declaration",
+    ),
     (
         os.path.join("selinux", "rules.c"),
         "COS17: 4.19 keeps the policydb",
