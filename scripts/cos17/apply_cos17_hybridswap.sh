@@ -357,6 +357,36 @@ REPLACES = [
         "path_umount declaration",
     ),
     (
+        os.path.join("throne_comm.c"),
+        "COS17: struct proc_ops appeared",
+        "static const struct proc_ops uid_scanner_proc_ops = {\n"
+        "    .proc_open = uid_scanner_open,\n"
+        "    .proc_read = seq_read,\n"
+        "\t.proc_write = uid_scanner_write,\n"
+        "    .proc_lseek = seq_lseek,\n"
+        "    .proc_release = single_release,\n"
+        "};",
+        "/* COS17: struct proc_ops appeared in Linux 5.6; 4.19 uses file_operations. */\n"
+        "#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 6, 0)\n"
+        "static const struct file_operations uid_scanner_proc_ops = {\n"
+        "\t.open = uid_scanner_open,\n"
+        "\t.read = seq_read,\n"
+        "\t.write = uid_scanner_write,\n"
+        "\t.llseek = seq_lseek,\n"
+        "\t.release = single_release,\n"
+        "};\n"
+        "#else\n"
+        "static const struct proc_ops uid_scanner_proc_ops = {\n"
+        "\t.proc_open = uid_scanner_open,\n"
+        "\t.proc_read = seq_read,\n"
+        "\t.proc_write = uid_scanner_write,\n"
+        "\t.proc_lseek = seq_lseek,\n"
+        "\t.proc_release = single_release,\n"
+        "};\n"
+        "#endif",
+        "proc_ops from file_operations",
+    ),
+    (
         os.path.join("selinux", "rules.c"),
         "COS17: 4.19 keeps the policydb",
         "static struct policydb *get_policydb(void)\n"
