@@ -134,9 +134,10 @@ say "== [2/3] patching kernel tree =="
 python3 "$PATCHER" "$ROOT" $CHECK
 
 # ------------------------------------------------------- sukisu 4.19 compat --
-# Ветка main SukiSU использует MODULE_IMPORT_NS(), появившийся в Linux 5.4.
-# В 4.19 такого макроса нет -> clang -Werror падает на
-# drivers/kernelsu/core/init.c (implicit function declaration).
+# Ветка main SukiSU местами использует API, появившийся позже 4.19:
+#   * MODULE_IMPORT_NS()      — Linux 5.4 (kernel/core/init.c)
+#   * copy_to_kernel_nofault() — Linux 5.8 (hook/arm64/patch_memory.c)
+# Без этого clang -Werror падает на implicit declaration.
 # Правим ТОЛЬКО если SukiSU уже развёрнут в дереве (CI делает это до нас).
 sukisu_compat() {
     local dir="$ROOT/drivers/kernelsu"
@@ -150,30 +151,53 @@ import os
 import sys
 
 root = sys.argv[1]
-path = os.path.join(root, "core", "init.c")
-if not os.path.isfile(path):
-    print("  skip: core/init.c not found")
-    sys.exit(0)
-with open(path, encoding="utf-8", newline="") as f:
-    src = f.read()
-if "#ifndef MODULE_IMPORT_NS" in src:
-    print("  skip: MODULE_IMPORT_NS compat already present")
-    sys.exit(0)
-anchor = "#include <linux/moduleparam.h>"
-if anchor not in src:
-    print("  FAIL: anchor '%s' not found in init.c" % anchor)
-    sys.exit(1)
-block = (
-    anchor + "\n\n"
-    "/* COS17: MODULE_IMPORT_NS appeared in Linux 5.4; 4.19 has no such macro. */\n"
-    "#ifndef MODULE_IMPORT_NS\n"
-    "#define MODULE_IMPORT_NS(ns)\n"
-    "#endif"
-)
-src = src.replace(anchor, block, 1)
-with open(path, "w", encoding="utf-8", newline="") as f:
-    f.write(src)
-print("  ok: MODULE_IMPORT_NS compat added to kernel/core/init.c")
+
+PATCHES = [
+    (
+        os.path.join("core", "init.c"),
+        "#include <linux/moduleparam.h>",
+        "#ifndef MODULE_IMPORT_NS",
+        "/* COS17: MODULE_IMPORT_NS appeared in Linux 5.4; 4.19 has no such macro. */\n"
+        "#ifndef MODULE_IMPORT_NS\n"
+        "#define MODULE_IMPORT_NS(ns)\n"
+        "#endif",
+        "MODULE_IMPORT_NS",
+    ),
+    (
+        os.path.join("hook", "arm64", "patch_memory.c"),
+        '#include "asm-generic/fixmap.h"',
+        "#define copy_to_kernel_nofault",
+        "/* COS17: copy_to_kernel_nofault appeared in Linux 5.8. */\n"
+        "#include <linux/version.h>\n"
+        "#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)\n"
+        "#define copy_to_kernel_nofault(dst, src, size) \\\n"
+        "\tprobe_kernel_write((dst), (const void *)(src), (size))\n"
+        "#endif",
+        "copy_to_kernel_nofault",
+    ),
+]
+
+fail = 0
+for rel, anchor, marker, block, label in PATCHES:
+    path = os.path.join(root, rel)
+    if not os.path.isfile(path):
+        print("  skip: %s not found" % rel)
+        continue
+    with open(path, encoding="utf-8", newline="") as f:
+        src = f.read()
+    if marker in src:
+        print("  skip: %s (%s compat already present)" % (rel, label))
+        continue
+    if anchor not in src:
+        print("  FAIL: anchor '%s' not found in %s" % (anchor, rel))
+        fail = 1
+        continue
+    src = src.replace(anchor, anchor + "\n\n" + block, 1)
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        f.write(src)
+    print("  ok: %s compat added to %s" % (label, rel))
+
+sys.exit(fail)
 PY
 }
 
