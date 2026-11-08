@@ -702,10 +702,529 @@ PY
     fi
 }
 
+# ------------------------------------------------------- susfs + SukiSU ------
+# Ядровая часть susfs (fs/susfs.c, хуки в fs/*, kernel/*, security/selinux)
+# уже лежит в ветке cos17 — это ровно тот susfs v2.3.0 NON-GKI, что и в
+# DXRN-MoonWake/moonwake_kernel_xiaomi_ruby (ветка moon). Не хватает только
+# интеграции со стороны SukiSU Ultra v3.2.0:
+#   - Kconfig-символы CONFIG_KSU_SUSFS_* (иначе vendor/susfs.config
+#     молча выкидывается make olddefconfig, и fs/susfs.c не собирается);
+#   - struct cred *ksu_cred и его инициализация;
+#   - setup_selinux(domain, cred) вместо setup_selinux(domain);
+#   - susfs_is_current_ksu_domain()/susfs_set_ksu_sid()/setup_ksu_cred();
+#   - вызовы susfs_init(), susfs_start_sdcard_monitor_fn();
+#   - разбор prctl(KERNEL_SU_OPTION, CMD_SUSFS_*) в ksu_handle_prctl().
+# SukiSU v3.2.0 взят из тега, поэтому анкоры стабильны.
+susfs_ksu_integration() {
+    local dir="$ROOT/drivers/kernelsu"
+    if [ ! -d "$dir" ]; then
+        say "== susfs/KSU: пропускаю (drivers/kernelsu нет) =="
+        return 0
+    fi
+    [ -f "$dir/core_hook.c" ] || {
+        warn "== susfs/KSU: неизвестная раскладка SukiSU, пропускаю =="
+        return 0
+    }
+    say "== susfs/KSU: интеграция SukiSU v3.2.0 + susfs v2.3.0 =="
+    python3 - "$dir" <<'PY'
+import os
+import sys
+
+root = sys.argv[1]
+
+KCONFIG_SUSFS = """
+menu "KernelSU - SUSFS"
+
+config KSU_SUSFS
+\tbool "KernelSU addon - SUSFS"
+\tdepends on KSU
+\tdefault y
+\thelp
+\t  Enable the kernel-side SUSFS v2.x implementation (fs/susfs.c).
+
+config KSU_SUSFS_SUS_PATH
+\tbool "Hide suspicious paths"
+\tdepends on KSU_SUSFS
+\tdefault y
+
+config KSU_SUSFS_SUS_MOUNT
+\tbool "Hide suspicious mounts"
+\tdepends on KSU_SUSFS
+\tdefault y
+
+config KSU_SUSFS_SUS_KSTAT
+\tbool "Spoof kstat of suspicious files"
+\tdepends on KSU_SUSFS
+\tdefault y
+
+config KSU_SUSFS_TRY_UMOUNT
+\tbool "Use ksu try_umount"
+\tdepends on KSU_SUSFS
+\tdefault y
+
+config KSU_SUSFS_SPOOF_UNAME
+\tbool "Spoof uname"
+\tdepends on KSU_SUSFS
+\tdefault y
+
+config KSU_SUSFS_ENABLE_LOG
+\tbool "Enable susfs log"
+\tdepends on KSU_SUSFS
+\tdefault y
+
+config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+\tbool "Hide ksu and susfs symbols from /proc/kallsyms"
+\tdepends on KSU_SUSFS
+\tdefault y
+
+config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+\tbool "Spoof /proc/cmdline"
+\tdepends on KSU_SUSFS
+\tdefault y
+
+config KSU_SUSFS_OPEN_REDIRECT
+\tbool "Redirect a path to another path"
+\tdepends on KSU_SUSFS
+\tdefault y
+
+config KSU_SUSFS_SUS_MAP
+\tbool "Hide mmapped real files from proc maps"
+\tdepends on KSU_SUSFS
+\tdefault y
+
+config KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
+\tbool "Auto add ksu default mounts to sus mounts"
+\tdepends on KSU_SUSFS
+\tdefault y
+
+config KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT
+\tbool "Auto add bind mounts to sus mounts"
+\tdepends on KSU_SUSFS
+\tdefault y
+
+config KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT
+\tbool "Auto add try_umount for bind mounts"
+\tdepends on KSU_SUSFS
+\tdefault y
+
+config KSU_SUSFS_HAS_MAGIC_MOUNT
+\tbool "Kernel supports magic mount"
+\tdepends on KSU_SUSFS
+\tdefault n
+
+config KSU_SUSFS_SUS_OVERLAYFS
+\tbool "Hide overlayfs mounts"
+\tdepends on KSU_SUSFS
+\tdefault y
+
+config KSU_SUSFS_SUS_SU
+\tbool "Enable deprecated sus_su"
+\tdepends on KSU_SUSFS
+\tdefault n
+
+endmenu
+"""
+
+CORE_HOOK_DISPATCH = r'''
+#ifdef CONFIG_KSU_SUSFS
+static void susfs_handle_prctl(unsigned long cmd, unsigned long arg3)
+{
+	void __user **user_info = (void __user **)&arg3;
+
+	setup_ksu_cred();
+
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	if (cmd == CMD_SUSFS_ADD_SUS_PATH) {
+		susfs_add_sus_path(user_info);
+		return;
+	}
+	if (cmd == CMD_SUSFS_ADD_SUS_PATH_LOOP) {
+		susfs_add_sus_path_loop(user_info);
+		return;
+	}
+#endif
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	if (cmd == CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS) {
+		susfs_set_hide_sus_mnts_for_non_su_procs(user_info);
+		return;
+	}
+#endif
+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+	if (cmd == CMD_SUSFS_ADD_SUS_KSTAT) {
+		susfs_add_sus_kstat(user_info);
+		return;
+	}
+	if (cmd == CMD_SUSFS_UPDATE_SUS_KSTAT) {
+		susfs_update_sus_kstat(user_info);
+		return;
+	}
+	if (cmd == CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY) {
+		susfs_add_sus_kstat(user_info);
+		return;
+	}
+#endif
+#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
+	if (cmd == CMD_SUSFS_ADD_TRY_UMOUNT) {
+		susfs_add_try_umount(user_info);
+		return;
+	}
+#endif
+#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
+	if (cmd == CMD_SUSFS_SET_UNAME) {
+		susfs_set_uname(user_info);
+		return;
+	}
+#endif
+#ifdef CONFIG_KSU_SUSFS_ENABLE_LOG
+	if (cmd == CMD_SUSFS_ENABLE_LOG) {
+		susfs_enable_log(user_info);
+		return;
+	}
+#endif
+#ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+	if (cmd == CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG) {
+		susfs_set_cmdline_or_bootconfig(user_info);
+		return;
+	}
+#endif
+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+	if (cmd == CMD_SUSFS_ADD_OPEN_REDIRECT) {
+		susfs_add_open_redirect(user_info);
+		return;
+	}
+#endif
+#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+	if (cmd == CMD_SUSFS_ADD_SUS_MAP) {
+		susfs_add_sus_map(user_info);
+		return;
+	}
+#endif
+	if (cmd == CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING) {
+		susfs_set_avc_log_spoofing(user_info);
+		return;
+	}
+	if (cmd == CMD_SUSFS_SHOW_ENABLED_FEATURES) {
+		susfs_get_enabled_features(user_info);
+		return;
+	}
+	if (cmd == CMD_SUSFS_SHOW_VARIANT) {
+		susfs_show_variant(user_info);
+		return;
+	}
+	if (cmd == CMD_SUSFS_SHOW_VERSION) {
+		susfs_show_version(user_info);
+		return;
+	}
+}
+#endif // CONFIG_KSU_SUSFS
+
+'''
+
+SELINUX_SUSFS = r'''
+#ifdef CONFIG_KSU_SUSFS
+static u32 susfs_ksu_sid __read_mostly;
+
+void susfs_set_ksu_sid(void)
+{
+	u32 sid = 0;
+
+	if (security_secctx_to_secid(KERNEL_SU_DOMAIN, strlen(KERNEL_SU_DOMAIN),
+				     &sid)) {
+		pr_err("susfs: failed to resolve sid for '%s'\n",
+		       KERNEL_SU_DOMAIN);
+		return;
+	}
+	WRITE_ONCE(susfs_ksu_sid, sid);
+}
+
+bool susfs_is_current_ksu_domain(void)
+{
+	u32 sid = READ_ONCE(susfs_ksu_sid);
+
+	if (unlikely(!sid)) {
+		susfs_set_ksu_sid();
+		sid = READ_ONCE(susfs_ksu_sid);
+		if (!sid)
+			return false;
+	}
+
+	return unlikely(current_sid() == sid);
+}
+
+void setup_ksu_cred(void)
+{
+	struct task_security_struct *tsec;
+
+	if (!ksu_cred)
+		return;
+
+	if (!READ_ONCE(susfs_ksu_sid))
+		susfs_set_ksu_sid();
+	if (!READ_ONCE(susfs_ksu_sid))
+		return;
+
+	tsec = ksu_cred->security;
+	if (tsec && tsec->sid == READ_ONCE(susfs_ksu_sid))
+		return;
+
+	if (transive_to_domain(KERNEL_SU_DOMAIN, ksu_cred))
+		pr_err("susfs: failed to set ksu cred domain\n");
+}
+#endif // CONFIG_KSU_SUSFS
+'''
+
+PATCHES = [
+    # ---- Kconfig ---------------------------------------------------------
+    ("Kconfig", None, "config KSU_SUSFS", KCONFIG_SUSFS, "susfs Kconfig"),
+    # ---- ksu.c -----------------------------------------------------------
+    (
+        "ksu.c",
+        "#include <linux/export.h>\n#include <linux/fs.h>",
+        "CONFIG_KSU_SUSFS",
+        "#include <linux/export.h>\n"
+        "#include <linux/fs.h>\n"
+        "#include <linux/cred.h>\n"
+        "\n"
+        "#ifdef CONFIG_KSU_SUSFS\n"
+        "#include <linux/susfs.h>\n"
+        "#endif",
+        "susfs include",
+    ),
+    (
+        "ksu.c",
+        "static struct workqueue_struct *ksu_workqueue;",
+        "struct cred *ksu_cred;",
+        "static struct workqueue_struct *ksu_workqueue;\n"
+        "\n"
+        "struct cred *ksu_cred;",
+        "ksu_cred definition",
+    ),
+    (
+        "ksu.c",
+        "\tksu_core_init();",
+        "ksu_cred = prepare_creds();",
+        "\tksu_cred = prepare_creds();\n"
+        "\tif (!ksu_cred)\n"
+        "\t\tpr_err(\"prepare cred failed!\\n\");\n"
+        "\n"
+        "\tksu_core_init();",
+        "ksu_cred init",
+    ),
+    (
+        "ksu.c",
+        "\tksu_throne_tracker_init();",
+        "susfs_init();",
+        "\tksu_throne_tracker_init();\n"
+        "#ifdef CONFIG_KSU_SUSFS\n"
+        "\tsusfs_init();\n"
+        "#endif",
+        "susfs_init call",
+    ),
+    (
+        "ksu.c",
+        "\tdestroy_workqueue(ksu_workqueue);",
+        "put_cred(ksu_cred);",
+        "\tdestroy_workqueue(ksu_workqueue);\n"
+        "\n"
+        "\tif (ksu_cred)\n"
+        "\t\tput_cred(ksu_cred);",
+        "ksu_cred put",
+    ),
+    # ---- selinux.h -------------------------------------------------------
+    (
+        os.path.join("selinux", "selinux.h"),
+        "#include \"linux/types.h\"\n#include \"linux/version.h\"",
+        "#include \"linux/cred.h\"",
+        "#include \"linux/types.h\"\n"
+        "#include \"linux/version.h\"\n"
+        "#include \"linux/cred.h\"",
+        "cred include",
+    ),
+    (
+        os.path.join("selinux", "selinux.h"),
+        "void setup_selinux(const char *);",
+        "setup_ksu_cred",
+        "void setup_selinux(const char *, struct cred *);\n"
+        "\n"
+        "#ifdef CONFIG_KSU_SUSFS\n"
+        "void setup_ksu_cred(void);\n"
+        "void susfs_set_ksu_sid(void);\n"
+        "bool susfs_is_current_ksu_domain(void);\n"
+        "#endif",
+        "susfs selinux prototypes",
+    ),
+    # ---- selinux.c -------------------------------------------------------
+    (
+        os.path.join("selinux", "selinux.c"),
+        "#define KERNEL_SU_DOMAIN \"u:r:su:s0\"",
+        "extern struct cred *ksu_cred;",
+        "#define KERNEL_SU_DOMAIN \"u:r:su:s0\"\n"
+        "\n"
+        "#ifdef CONFIG_KSU_SUSFS\n"
+        "extern struct cred *ksu_cred;\n"
+        "#endif",
+        "ksu_cred extern",
+    ),
+    (
+        os.path.join("selinux", "selinux.c"),
+        "static int transive_to_domain(const char *domain)\n"
+        "{\n"
+        "\tstruct cred *cred;\n"
+        "\tstruct task_security_struct *tsec;\n"
+        "\tu32 sid;\n"
+        "\tint error;\n"
+        "\n"
+        "\tcred = (struct cred *)__task_cred(current);\n"
+        "\n"
+        "\ttsec = cred->security;",
+        "static int transive_to_domain(const char *domain, struct cred *cred)",
+        "static int transive_to_domain(const char *domain, struct cred *cred)\n"
+        "{\n"
+        "\tstruct task_security_struct *tsec;\n"
+        "\tu32 sid;\n"
+        "\tint error;\n"
+        "\n"
+        "\tif (!cred)\n"
+        "\t\treturn -EINVAL;\n"
+        "\n"
+        "\ttsec = cred->security;",
+        "transive_to_domain cred arg",
+    ),
+    (
+        os.path.join("selinux", "selinux.c"),
+        "void setup_selinux(const char *domain)\n"
+        "{\n"
+        "\tif (transive_to_domain(domain)) {",
+        "setup_selinux(const char *domain, struct cred *cred)",
+        "void setup_selinux(const char *domain, struct cred *cred)\n"
+        "{\n"
+        "\tif (transive_to_domain(domain, cred)) {",
+        "setup_selinux cred arg",
+    ),
+    (
+        os.path.join("selinux", "selinux.c"),
+        "\treturn result;\n}\n\nbool is_zygote(void *sec)",
+        "susfs_is_current_ksu_domain",
+        "\treturn result;\n}\n" + SELINUX_SUSFS + "\nbool is_zygote(void *sec)",
+        "susfs selinux helpers",
+    ),
+    # ---- core_hook.c -----------------------------------------------------
+    (
+        "core_hook.c",
+        "#include <linux/binfmts.h>",
+        "#include <linux/susfs.h>",
+        "#include <linux/binfmts.h>\n"
+        "\n"
+        "#ifdef CONFIG_KSU_SUSFS\n"
+        "#include <linux/susfs.h>\n"
+        "#endif",
+        "susfs include",
+    ),
+    (
+        "core_hook.c",
+        "\tsetup_selinux(profile->selinux_domain);",
+        "setup_selinux(profile->selinux_domain, cred);",
+        "\tsetup_selinux(profile->selinux_domain, cred);",
+        "setup_selinux call",
+    ),
+    (
+        "core_hook.c",
+        "int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3,",
+        "susfs_handle_prctl",
+        CORE_HOOK_DISPATCH + "int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3,",
+        "susfs prctl handler",
+    ),
+    (
+        "core_hook.c",
+        "\tbool from_root = 0 == current_uid().val;\n"
+        "\tbool from_manager = is_manager();\n"
+        "\n"
+        "\tif (!from_root && !from_manager \n"
+        "\t\t&& !(is_allow_su() && is_system_bin_su())) {\n"
+        "\t\t// only root or manager can access this interface\n"
+        "\t\treturn 0;\n"
+        "\t}\n",
+        "susfs_handle_prctl(arg2, arg3);",
+        "\tbool from_root = 0 == current_uid().val;\n"
+        "\tbool from_manager = is_manager();\n"
+        "\n"
+        "\tif (!from_root && !from_manager \n"
+        "\t\t&& !(is_allow_su() && is_system_bin_su())) {\n"
+        "\t\t// only root or manager can access this interface\n"
+        "\t\treturn 0;\n"
+        "\t}\n"
+        "\n"
+        "#ifdef CONFIG_KSU_SUSFS\n"
+        "\tif (from_root && arg2 >= CMD_SUSFS_ADD_SUS_PATH &&\n"
+        "\t    arg2 <= CMD_SUSFS_ADD_SUS_MAP) {\n"
+        "\t\tsusfs_handle_prctl(arg2, arg3);\n"
+        "\t\treturn 0;\n"
+        "\t}\n"
+        "#endif",
+        "susfs prctl dispatch",
+    ),
+    (
+        "core_hook.c",
+        "\t\t\t\ton_post_fs_data();\n"
+        "\t\t\t\t// Initialize throne communication",
+        "#ifdef CONFIG_KSU_SUSFS\n\t\t\t\tsetup_ksu_cred();",
+        "\t\t\t\ton_post_fs_data();\n"
+        "#ifdef CONFIG_KSU_SUSFS\n"
+        "\t\t\t\tsetup_ksu_cred();\n"
+        "#endif\n"
+        "\t\t\t\t// Initialize throne communication",
+        "setup_ksu_cred on post-fs-data",
+    ),
+    (
+        "core_hook.c",
+        "\t\t\t\tpr_info(\"boot_complete triggered\\n\");",
+        "susfs_start_sdcard_monitor_fn();",
+        "\t\t\t\tpr_info(\"boot_complete triggered\\n\");\n"
+        "#ifdef CONFIG_KSU_SUSFS\n"
+        "\t\t\t\tsusfs_start_sdcard_monitor_fn();\n"
+        "#endif",
+        "susfs sdcard monitor start",
+    ),
+]
+
+fail = 0
+for rel, anchor, marker, block, label in PATCHES:
+    path = os.path.join(root, rel)
+    if not os.path.isfile(path):
+        print("  skip: %s not found" % rel)
+        continue
+    with open(path, encoding="utf-8", newline="") as f:
+        src = f.read().replace("\r\n", "\n")
+    if marker and marker in src:
+        print("  skip: %s (%s already present)" % (rel, label))
+        continue
+    if anchor is None:
+        src = src.rstrip("\n") + "\n" + block
+    else:
+        if src.count(anchor) != 1:
+            print("  FAIL: %s: anchor matched %d time(s), expected 1 (%s)"
+                  % (rel, src.count(anchor), label))
+            fail = 1
+            continue
+        src = src.replace(anchor, block, 1)
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(src)
+    print("  ok: %s added to %s" % (label, rel))
+
+sys.exit(fail)
+PY
+}
+
 if [ -z "$CHECK" ]; then
     sukisu_compat
 else
     say "== --check: SukiSU compat не применяю =="
+fi
+
+if [ -z "$CHECK" ]; then
+    susfs_ksu_integration
+else
+    say "== --check: susfs/KSU интеграцию не применяю =="
 fi
 
 # ---------------------------------------------------------------- config ----
@@ -760,6 +1279,14 @@ if [ -z "$CHECK" ]; then
     chk "" "CONFIG_OPLUS_NODES=y" arch/arm64/configs/vendor/cos17.config "OPLUS_NODES config"
     chk "" "#include <trace/hooks/vh_vmscan.h>" drivers/android/vendor_hooks.c "CREATE_TRACE_POINTS"
     chk arch/arm64/configs/vendor/cos17.config "" "" "config fragment"
+    if [ -d "$ROOT/drivers/kernelsu" ]; then
+        chk arch/arm64/configs/vendor/susfs.config "" "" "susfs config fragment"
+        chk "" "config KSU_SUSFS" drivers/kernelsu/Kconfig "susfs Kconfig"
+        chk "" "susfs_is_current_ksu_domain" drivers/kernelsu/selinux/selinux.c "susfs selinux helpers"
+        chk "" "susfs_handle_prctl" drivers/kernelsu/core_hook.c "susfs prctl dispatch"
+        chk "" "susfs_init();" drivers/kernelsu/ksu.c "susfs_init call"
+        chk "" "susfs_start_sdcard_monitor_fn" drivers/kernelsu/core_hook.c "susfs sdcard monitor"
+    fi
 
     if grep -qE '^unsigned move_active_pages_to_lru' "$ROOT/mm/vmscan.c" 2>/dev/null; then
         printf '  ok     %s\n' "de-static move_active_pages_to_lru"
