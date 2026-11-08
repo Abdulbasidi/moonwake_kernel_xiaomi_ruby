@@ -922,31 +922,56 @@ static void susfs_handle_prctl(unsigned long cmd, unsigned long arg3)
 
 SELINUX_SUSFS = r'''
 #ifdef CONFIG_KSU_SUSFS
-static u32 susfs_ksu_sid __read_mostly;
+#define KERNEL_INIT_DOMAIN "u:r:init:s0"
+#define KERNEL_ZYGOTE_DOMAIN "u:r:zygote:s0"
+#define KERNEL_PRIV_APP_DOMAIN "u:r:priv_app:s0:c512,c768"
 
-void susfs_set_ksu_sid(void)
+/* security/selinux/avc.c references these two as extern */
+u32 susfs_ksu_sid __read_mostly;
+u32 susfs_priv_app_sid __read_mostly;
+u32 susfs_init_sid __read_mostly;
+u32 susfs_zygote_sid __read_mostly;
+
+static void susfs_set_sid(const char *secctx_name, u32 *out_sid)
 {
 	u32 sid = 0;
 
-	if (security_secctx_to_secid(KERNEL_SU_DOMAIN, strlen(KERNEL_SU_DOMAIN),
-				     &sid)) {
-		pr_err("susfs: failed to resolve sid for '%s'\n",
-		       KERNEL_SU_DOMAIN);
+	if (!secctx_name || !out_sid)
+		return;
+
+	if (security_secctx_to_secid(secctx_name, strlen(secctx_name), &sid)) {
+		pr_err("susfs: failed to resolve sid for '%s'\n", secctx_name);
 		return;
 	}
-	WRITE_ONCE(susfs_ksu_sid, sid);
+	WRITE_ONCE(*out_sid, sid);
+}
+
+void susfs_set_ksu_sid(void)
+{
+	susfs_set_sid(KERNEL_SU_DOMAIN, &susfs_ksu_sid);
+}
+
+void susfs_set_init_sid(void)
+{
+	susfs_set_sid(KERNEL_INIT_DOMAIN, &susfs_init_sid);
+}
+
+void susfs_set_zygote_sid(void)
+{
+	susfs_set_sid(KERNEL_ZYGOTE_DOMAIN, &susfs_zygote_sid);
+}
+
+void susfs_set_priv_app_sid(void)
+{
+	susfs_set_sid(KERNEL_PRIV_APP_DOMAIN, &susfs_priv_app_sid);
 }
 
 bool susfs_is_current_ksu_domain(void)
 {
 	u32 sid = READ_ONCE(susfs_ksu_sid);
 
-	if (unlikely(!sid)) {
-		susfs_set_ksu_sid();
-		sid = READ_ONCE(susfs_ksu_sid);
-		if (!sid)
-			return false;
-	}
+	if (unlikely(!sid))
+		return false;
 
 	return unlikely(current_sid() == sid);
 }
@@ -1049,6 +1074,9 @@ PATCHES = [
         "#ifdef CONFIG_KSU_SUSFS\n"
         "void setup_ksu_cred(void);\n"
         "void susfs_set_ksu_sid(void);\n"
+        "void susfs_set_init_sid(void);\n"
+        "void susfs_set_zygote_sid(void);\n"
+        "void susfs_set_priv_app_sid(void);\n"
         "bool susfs_is_current_ksu_domain(void);\n"
         "#endif",
         "susfs selinux prototypes",
@@ -1107,6 +1135,27 @@ PATCHES = [
         "susfs_is_current_ksu_domain",
         "\treturn result;\n}\n" + SELINUX_SUSFS + "\nbool is_zygote(void *sec)",
         "susfs selinux helpers",
+    ),
+    # ---- selinux/rules.c -------------------------------------------------
+    (
+        os.path.join("selinux", "rules.c"),
+        "\tmutex_unlock(&ksu_rules);\n"
+        "}\n"
+        "\n"
+        "#define MAX_SEPOL_LEN 128",
+        "susfs_set_priv_app_sid();",
+        "\tmutex_unlock(&ksu_rules);\n"
+        "\n"
+        "#ifdef CONFIG_KSU_SUSFS\n"
+        "\tsusfs_set_priv_app_sid();\n"
+        "\tsusfs_set_init_sid();\n"
+        "\tsusfs_set_ksu_sid();\n"
+        "\tsusfs_set_zygote_sid();\n"
+        "#endif\n"
+        "}\n"
+        "\n"
+        "#define MAX_SEPOL_LEN 128",
+        "susfs selinux sid setup",
     ),
     # ---- core_hook.c -----------------------------------------------------
     (
@@ -1283,6 +1332,7 @@ if [ -z "$CHECK" ]; then
         chk arch/arm64/configs/vendor/susfs.config "" "" "susfs config fragment"
         chk "" "config KSU_SUSFS" drivers/kernelsu/Kconfig "susfs Kconfig"
         chk "" "susfs_is_current_ksu_domain" drivers/kernelsu/selinux/selinux.c "susfs selinux helpers"
+        chk "" "susfs_set_priv_app_sid" drivers/kernelsu/selinux/rules.c "susfs sid setup"
         chk "" "susfs_handle_prctl" drivers/kernelsu/core_hook.c "susfs prctl dispatch"
         chk "" "susfs_init();" drivers/kernelsu/ksu.c "susfs_init call"
         chk "" "susfs_start_sdcard_monitor_fn" drivers/kernelsu/core_hook.c "susfs sdcard monitor"
