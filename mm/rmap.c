@@ -1733,13 +1733,15 @@ static int page_not_mapped(struct page *page)
  *
  * If unmap is successful, return true. Otherwise, false.
  */
-bool try_to_unmap(struct page *page, enum ttu_flags flags)
+bool try_to_unmap_vma(struct page *page, enum ttu_flags flags,
+		      struct vm_area_struct *vma)
 {
 	struct rmap_walk_control rwc = {
 		.rmap_one = try_to_unmap_one,
 		.arg = (void *)flags,
 		.done = page_not_mapped,
 		.anon_lock = page_lock_anon_vma_read,
+		.target_vma = vma,
 	};
 
 	/*
@@ -1766,6 +1768,11 @@ bool try_to_unmap(struct page *page, enum ttu_flags flags)
 	 * if page table locking is skipped: use TTU_SYNC to wait for that.
 	 */
 	return !page_mapcount(page);
+}
+
+bool try_to_unmap(struct page *page, enum ttu_flags flags)
+{
+	return try_to_unmap_vma(page, flags, NULL);
 }
 
 /**
@@ -1845,6 +1852,15 @@ static void rmap_walk_anon(struct page *page, struct rmap_walk_control *rwc,
 	pgoff_t pgoff_start, pgoff_end;
 	struct anon_vma_chain *avc;
 
+	if (rwc->target_vma) {
+		unsigned long address = vma_address(page, rwc->target_vma);
+
+		if (address == -EFAULT)
+			return;
+		rwc->rmap_one(page, rwc->target_vma, address, rwc->arg);
+		return;
+	}
+
 	if (locked) {
 		anon_vma = page_anon_vma(page);
 		/* anon_vma disappear under us? */
@@ -1897,6 +1913,7 @@ static void rmap_walk_file(struct page *page, struct rmap_walk_control *rwc,
 	struct address_space *mapping = page_mapping(page);
 	pgoff_t pgoff_start, pgoff_end;
 	struct vm_area_struct *vma;
+	unsigned long address;
 
 	/*
 	 * The page lock not only makes sure that page->mapping cannot
@@ -1913,9 +1930,17 @@ static void rmap_walk_file(struct page *page, struct rmap_walk_control *rwc,
 	pgoff_end = pgoff_start + hpage_nr_pages(page) - 1;
 	if (!locked)
 		i_mmap_lock_read(mapping);
+
+	if (rwc->target_vma) {
+		address = vma_address(page, rwc->target_vma);
+		if (address != -EFAULT)
+			rwc->rmap_one(page, rwc->target_vma, address, rwc->arg);
+		goto done;
+	}
+
 	vma_interval_tree_foreach(vma, &mapping->i_mmap,
 			pgoff_start, pgoff_end) {
-		unsigned long address = vma_address(page, vma);
+		address = vma_address(page, vma);
 
 		VM_BUG_ON_VMA(address == -EFAULT, vma);
 		cond_resched();
