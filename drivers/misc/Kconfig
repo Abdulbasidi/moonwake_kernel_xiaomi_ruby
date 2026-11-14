@@ -550,4 +550,17 @@ source "drivers/misc/ocxl/Kconfig"
 source "drivers/misc/cardreader/Kconfig"
 source "drivers/misc/mediatek/Kconfig"
 source "drivers/misc/hwid/Kconfig"
+
+config OPLUS_NODES
+	bool "Oplus/ColorOS proc nodes (COS17 compat)"
+	depends on PROC_FS
+	default n
+	help
+	  Proc nodes expected by ColorOS userspace services:
+	  /proc/oplus_binder/{ux_flag,async_ux_enable,set_last_async_ux,
+	  all_tasks_ux_sts}, /proc/bootprof, /proc/opbootfrom,
+	  /proc/last_boot_reason, /proc/phoenix, /proc/jank_info,
+	  /proc/theiaPwkReport. Interface-compatible implementations;
+	  binder scheduling hooks of the donor are not ported.
+
 endmenu
