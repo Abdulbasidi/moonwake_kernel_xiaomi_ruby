@@ -63,8 +63,16 @@
 
 #include "internal.h"
 
+#include <trace/hooks/vh_vmscan.h>
+#undef TRACE_INCLUDE_PATH
 #define CREATE_TRACE_POINTS
 #include <trace/events/vmscan.h>
+#include <linux/string.h>
+
+#ifdef CONFIG_HYBRIDSWAP_SWAPD
+static int hybridswapd_swappiness = 200;
+extern bool free_zram_is_ok(void);
+#endif
 
 struct scan_control {
 	/* How many pages shrink_list() should reclaim */
@@ -2037,7 +2045,7 @@ shrink_inactive_list(unsigned long nr_to_scan, struct lruvec *lruvec,
  * Returns the number of pages moved to the given lru.
  */
 
-static unsigned move_active_pages_to_lru(struct lruvec *lruvec,
+unsigned move_active_pages_to_lru(struct lruvec *lruvec,
 				     struct list_head *list,
 				     struct list_head *pages_to_free,
 				     enum lru_list lru)
@@ -2336,6 +2344,17 @@ static void get_scan_count(struct lruvec *lruvec, struct mem_cgroup *memcg,
 			   unsigned long *lru_pages)
 {
 	int swappiness = mem_cgroup_swappiness(memcg);
+#ifdef CONFIG_HYBRIDSWAP_SWAPD
+	/* hybridswapd: zram почти полон -> агрессивно свопаем anon,
+	 * иначе вообще не трогаем anon (пусть работает zram). */
+	if (!current_is_kswapd() &&
+	    !strncmp(current->comm, "hybridswapd:",
+		     sizeof("hybridswapd:") - 1)) {
+		swappiness = hybridswapd_swappiness;
+		if (!free_zram_is_ok())
+			swappiness = 0;
+	}
+#endif
 	struct zone_reclaim_stat *reclaim_stat = &lruvec->reclaim_stat;
 	u64 fraction[ANON_AND_FILE];
 	u64 denominator = 0;	/* gcc */
@@ -2497,6 +2516,8 @@ out:
 		if (!scan && !mem_cgroup_online(memcg))
 			scan = min(size, SWAP_CLUSTER_MAX);
 
+		/* NOTE: file thp is not supported in kernel-4.19! */
+		trace_android_vh_tune_scan_type((char *)(&scan_balance));
 		switch (scan_balance) {
 		case SCAN_EQUAL:
 			/* Scan lists relative to size */
