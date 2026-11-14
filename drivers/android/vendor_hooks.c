@@ -10,6 +10,8 @@
 #include <trace/hooks/vendor_hooks.h>
 #include <trace/hooks/memory.h>
 #include <trace/hooks/syscall_check.h>
+#include <linux/gfp.h>
+#include <trace/hooks/vh_vmscan.h>
 
 /*
  * Export tracepoints that act as a bare tracehook (ie: have no trace event

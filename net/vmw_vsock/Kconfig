@@ -68,3 +68,15 @@ config HYPERV_VSOCKETS
 
 	  To compile this driver as a module, choose M here: the module will be
 	  called hv_sock. If unsure, say N.
+
+config VSOCKETS_LOOPBACK
+	bool "Loopback transport for Virtual Sockets (phone compat)"
+	depends on VSOCKETS
+	default n
+	help
+	  Registers the AF_VSOCK family via a no-traffic loopback
+	  transport so socket(AF_VSOCK) succeeds on bare-metal phones.
+	  Needed by perfetto's traced (vsock://-1:2010 listener) on
+	  ColorOS 17 user builds without a hypervisor.
+
+	  Say Y for Android phone kernels without a vsock hypervisor.
