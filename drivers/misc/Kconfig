@@ -560,7 +560,13 @@ config OPLUS_NODES
 	  /proc/oplus_binder/{ux_flag,async_ux_enable,set_last_async_ux,
 	  all_tasks_ux_sts}, /proc/bootprof, /proc/opbootfrom,
 	  /proc/last_boot_reason, /proc/phoenix, /proc/jank_info,
-	  /proc/theiaPwkReport. Interface-compatible implementations;
-	  binder scheduling hooks of the donor are not ported.
+	  /proc/theiaPwkReport,
+	  /proc/oplus_scheduler/sched_assist/{sched_assist_scene,
+	  sched_impt_task,im_flag,im_flag_app},
+	  /proc/oplus_afs_config/{afs_config,afs_enable},
+	  /proc/waker_identify/rt_info, /proc/shell-temp,
+	  /proc/task_cpustats.  Interface-compatible implementations;
+	  binder and scheduler hooks of the donor are not ported, so the
+	  values are recorded but do not change scheduling decisions.
 
 endmenu
